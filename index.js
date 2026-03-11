@@ -20,8 +20,14 @@ app.post("/api/chat", async (req, res) => {
 
   if (!message) return res.status(400).json({ error: "Message is required" });
 
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || apiKey === "your_openai_api_key_here") {
+    return res.status(503).json({
+      error: "OpenAI API key is not configured. Add OPENAI_API_KEY to the server .env file.",
+    });
+  }
+
   try {
-    // Example: call OpenAI API (replace with your own API logic)
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
@@ -31,16 +37,36 @@ app.post("/api/chat", async (req, res) => {
       {
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
         },
+        timeout: 60000,
       }
     );
 
-    const reply = response.data.choices[0].message.content;
+    const reply = response.data.choices[0]?.message?.content;
+    if (!reply) {
+      return res.status(502).json({ error: "Empty response from ChatGPT" });
+    }
     res.json({ reply });
   } catch (error) {
-    console.error(error.message);
-    res.status(500).json({ error: "Failed to get response from ChatGPT" });
+    const status = error.response?.status;
+    const data = error.response?.data;
+
+    let message = "Failed to get response from ChatGPT";
+    if (status === 401) {
+      message = "Invalid OpenAI API key. Check OPENAI_API_KEY in .env";
+    } else if (status === 429) {
+      message = "Rate limit or quota exceeded. Try again later or check your OpenAI account.";
+    } else if (data?.error?.message) {
+      message = data.error.message;
+    } else if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
+      message = "Cannot reach OpenAI. Check your internet connection.";
+    } else if (error.message) {
+      message = error.message;
+    }
+
+    console.error("OpenAI error:", status, data?.error || error.message);
+    res.status(status && status >= 400 && status < 600 ? status : 500).json({ error: message });
   }
 });
 
